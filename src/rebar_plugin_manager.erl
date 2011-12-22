@@ -24,6 +24,8 @@
          command_info/1,
          plugins/1,
          once/2,
+         is_base_dir/0,
+         is_base_dir/1,
          do_in_deps_dir/2,
          generate_handler/3]).
 
@@ -51,6 +53,7 @@
 preprocess(Config, _) ->
     Plugins = plugins(Config),
     ?INFO("Managing Plugins: ~p~n", [Plugins]),
+    [ init(P, Config) || P <- Plugins, requires_init(P) ],
     update_code_path(Config),
     {ok, []}.
 
@@ -84,6 +87,14 @@ once(Tag, Command) ->
         done ->
             ok
     end.
+
+-spec is_base_dir() -> boolean().
+is_base_dir() ->
+    is_base_dir(rebar_utils:get_cwd()).
+
+-spec is_base_dir(string()) -> boolean().
+is_base_dir(Dir) ->
+    Dir == rebar_config:get_global(base_dir, undefined).
 
 -spec do_in_deps_dir(string(), fun((string()) -> any())) -> 'ok'.
 do_in_deps_dir(DepsDir, Handler) ->
@@ -171,6 +182,17 @@ generate_handler(Base, Cmds, Origin) ->
 %% Internal API
 %%
 
+init(Plugin, Config) ->
+    Plugin:init(Config).
+
+requires_init(Plugin) ->
+    case rebar_config:get_global({?MODULE, initialised, Plugin}, undefined) of
+        undefined ->
+            erlang:function_exported(Plugin, init, 1);
+        _ ->
+            false
+    end.
+
 mod_from_scratch(Base, Exports, Functions) ->
     [{attribute, ?LINE, module, list_to_atom(Base ++
                                              "_custom_build_plugin")},
@@ -221,6 +243,13 @@ load_binary(Name, Binary) ->
     end.
 
 update_code_path(Config) ->
+    %% TODO: this is far too simplistic, especially once we move to a 
+    %% central repository based approach. We need to differentiate between
+    %% things that we *know* should be on the code path (e.g., plugins, deps)
+    %% and other "uninteresting" directories
+
+    %% TODO: also we should put some explicit support in for seivy, where it isn't
+    %%  already on the code path...
     once(setup_path,
         fun() ->
             do_in_deps_dir(deps_dir(Config),
