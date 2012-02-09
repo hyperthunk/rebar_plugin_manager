@@ -21,6 +21,7 @@
 %% -----------------------------------------------------------------------------
 -module(rebar_plugin_manager).
 -export([preprocess/2,
+         'check-config'/2,
          command_info/1,
          plugins/1,
          once/2,
@@ -33,6 +34,7 @@
 -define(INFO(Msg), ?INFO(Msg, [])).
 -define(INFO(Msg, Args), ?LOG(info, Msg, Args)).
 -define(WARN(Msg, Args), ?LOG(warn, Msg, Args)).
+-define(ERROR(Msg, Args), ?LOG(error, Msg, Args)).
 -define(LOG(Level, Msg, Args), rebar_log:log(Level, Msg, Args)).
 -define(ABORT(Msg, Args), rebar_utils:abort(Msg, Args)).
 
@@ -56,6 +58,32 @@ preprocess(Config, _) ->
     [ init(P, Config) || P <- Plugins, requires_init(P) ],
     update_code_path(Config),
     {ok, []}.
+
+-spec 'check-config'(rebar_config:config(), any()) -> ok.
+'check-config'(Config, _) ->
+    case rebar_config:get_global(key, undefined) of
+        undefined ->
+            ?ABORT("check-config requires you to pass "
+                   "key=<name> on the command line...~n", []);
+        Key ->
+            [ check_config(list_to_atom(Key), Mode, Config) || Mode <-
+                                                [get_local, get, get_all] ],
+            ok
+    end.
+
+check_config(Key, ReadFunc, Config) ->
+    Args = case ReadFunc of
+        get_all -> [Config, Key];
+        _ -> [Config, Key, undefined]
+    end,
+    case apply(rebar_config, ReadFunc, Args) of
+        undefined ->
+            io:format("config key '~p' not found (~p)~n",
+                      [Key, ReadFunc]);
+        Value ->
+            io:format("config key '~p' found (~p): ~p~n",
+                      [Key, ReadFunc, Value])
+    end.
 
 -spec command_info(atom()) -> atom() | list(atom()).
 command_info(What) ->
@@ -243,7 +271,7 @@ load_binary(Name, Binary) ->
     end.
 
 update_code_path(Config) ->
-    %% TODO: this is far too simplistic, especially once we move to a 
+    %% TODO: this is far too simplistic, especially once we move to a
     %% central repository based approach. We need to differentiate between
     %% things that we *know* should be on the code path (e.g., plugins, deps)
     %% and other "uninteresting" directories

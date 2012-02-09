@@ -56,46 +56,9 @@ this __only__ works for single module plugins (i.e., where there is only one
 .erl file to download) and is far less flexible than using something like
 [alt_deps](https://github.com/hyperthunk/rebar_alt_deps).
 
-### Services API
-
-If you have installed the 
-[rebar_background_service](https://github.com/hyperthunk/rebar_background_service)
-package, then `rebar_plugin_manager` can delegate to the background service
-by utilising the 
-[rebar_phase_plugin](https://github.com/hyperthunk/rebar_phase_plugin) as a hook.
-
-This does mean that your build will have to use some non-standard commands, as
-there's no way to override rebar's default behaviour without putting a hook in.
-One way to achieve this, is to use the plugin's built-in `manage` command, which
-can be configured to switch over to the remote service like so:
-
-```erlang
-%% this (next) line turns off all of rebar's local behaviours
-{disable_local_application, true}.
-
-%% switch on the background service
-{services, [{rebar_background_service, true}]}.
-
-{background_service, [
-    {port, 10051},
-    {max_clients, 100},
-    {allow_async_clients, false},
-    {config, "%{HOME}/.rebar/background.config"}
-]}.
-
-{phases, [
-    {clean, [], ['remote-clean']},
-    {compile, [], ['remote-compile']},
-    {test, [compile], ['remote-test']}
-]}.
-
-```
-
-And run it: `rebar manage compile -v`.
-
 ## Installation
 
-The `rebar_plugin_manager` requires a recent version rebar with support for
+The `rebar_plugin_manager` requires a recent version of rebar with support for
 plugins hooking into the `Module:preprocess/2` mechanism.
 
 Include the following tuple in your rebar deps:
