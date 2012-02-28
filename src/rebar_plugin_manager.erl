@@ -148,12 +148,13 @@ deps_dir(Config) ->
     end.
 
 %%
-%% @doc Generate '<Command>'(Config, _AppFile) handler functions for each
+%% @doc Generate 'Command'(Config, _AppFile) handler functions for each
 %% command in `Cmds' and append them to either (a) a new module or (b) the
 %% origin (module) if (a) fails.
 %%
--spec generate_handler(Base::string(), Cmds::list(rebar_cmd_builder:command()),
-                        Origin::module()) -> module().
+-spec generate_handler(Base::string(),
+                       Cmds::list(rebar_plugin_manager:command()),
+                       Origin::module()) -> module().
 generate_handler(Base, Cmds, Origin) ->
     case rebar_config:get_global({Base, Origin}, undefined) of
         undefined ->
@@ -173,7 +174,13 @@ generate_handler(Base, Cmds, Origin) ->
                                                 Exports, Functions, Bin),
                     {GeneratedForms, fun load_binary/2};
                 error ->
-                    File = code:which(Origin),
+                    Path = filename:split(code:which(Origin)),
+                    {P, [_,BeamName]} = lists:split(length(Path) - 2, Path),
+                    %% NB: this is very specific to .erl sources!!!!
+                    SrcName = 
+                        filename:basename(BeamName, 
+                                          code:objfile_extension()) ++ ".erl",
+                    File = filename:join(P, SrcName),
                     case compile:file(File, [debug_info,
                                              binary, return_errors]) of
                         {ok, _, Bin} ->
