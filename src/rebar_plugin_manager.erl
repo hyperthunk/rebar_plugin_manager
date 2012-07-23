@@ -24,11 +24,11 @@
          'check-config'/2,
          command_info/1,
          plugins/1,
-         once/2,
-         is_base_dir/0,
+         once/3,
          is_base_dir/1,
+         is_base_dir/2,
          do_in_deps_dir/2,
-         generate_handler/3]).
+         generate_handler/4]).
 
 -define(DEBUG(Msg, Args), ?LOG(debug, Msg, Args)).
 -define(INFO(Msg), ?INFO(Msg, [])).
@@ -55,13 +55,13 @@
 preprocess(Config, _) ->
     Plugins = plugins(Config),
     ?INFO("Managing Plugins: ~p~n", [Plugins]),
-    [ init(P, Config) || P <- Plugins, requires_init(P) ],
+    [ init(P, Config) || P <- Plugins, requires_init(P, Config) ],
     update_code_path(Config),
     {ok, []}.
 
 -spec 'check-config'(rebar_config:config(), any()) -> ok.
 'check-config'(Config, _) ->
-    case rebar_config:get_global(key, undefined) of
+    case rebar_config:get_global(Config, key, undefined) of
         undefined ->
             ?ABORT("check-config requires you to pass "
                    "key=<name> on the command line...~n", []);
@@ -85,11 +85,13 @@ check_config(Key, ReadFunc, Config) ->
                       [Key, ReadFunc, Value])
     end.
 
--spec command_info(atom()) -> atom() | list(atom()).
+-spec command_info(atom()) -> atom() | list(atom()) | {'error', 'unsupported'}.
 command_info(What) ->
     case erlang:function_exported(rebar_utils, command_info, 1) of
         true ->
-            rebar_utils:command_info(What);
+            M = rebar_utils,
+            F = command_info,
+            apply(M, F, [What]);
         false ->
             V = 1,
             case (catch V = undefined) of
@@ -105,24 +107,24 @@ command_info(What) ->
 plugins(Config) ->
     lists:flatten(rebar_config:get_all(Config, plugins)).
 
--spec once(atom(), fun(() -> any())) -> 'ok' | term().
-once(Tag, Command) ->
-    case rebar_config:get_global(Tag, undefined) of
+-spec once(atom(), fun(() -> any()), rebar_config:config()) -> 'ok' | term().
+once(Tag, Command, Config) ->
+    case rebar_config:get_global(Config, Tag, undefined) of
         undefined ->
             try (Command())
-            after rebar_config:set_global(Tag, done)
+            after rebar_config:set_global(Config, Tag, done)
             end;
         done ->
             ok
     end.
 
--spec is_base_dir() -> boolean().
-is_base_dir() ->
-    is_base_dir(rebar_utils:get_cwd()).
+-spec is_base_dir(rebar_config:config()) -> boolean().
+is_base_dir(Config) ->
+    is_base_dir(rebar_utils:get_cwd(), Config).
 
--spec is_base_dir(string()) -> boolean().
-is_base_dir(Dir) ->
-    Dir == rebar_config:get_global(base_dir, undefined).
+-spec is_base_dir(string(), rebar_config:config()) -> boolean().
+is_base_dir(Dir, Config) ->
+    Dir == rebar_config:get_xconf(Config, base_dir).
 
 -spec do_in_deps_dir(string(), fun((string()) -> any())) -> 'ok'.
 do_in_deps_dir(DepsDir, Handler) ->
@@ -135,13 +137,13 @@ do_in_deps_dir(DepsDir, Handler) ->
 
 -spec deps_dir(rebar_config:config()) -> string().
 deps_dir(Config) ->
-    case rebar_config:get_global(alt_deps_dir, undefined) of
+    case rebar_config:get_global(Config, alt_deps_dir, undefined) of
         undefined ->
             Dir = rebar_config:get_local(Config, alt_deps_dir,
                         rebar_config:get_local(Config, deps_dir, "deps")),
             DepsDir = filename:absname(Dir),
             rebar_utils:ensure_dir(filename:join(DepsDir, "foo")),
-            rebar_config:set_global(alt_deps_dir, DepsDir),
+            rebar_config:set_global(Config, alt_deps_dir, DepsDir),
             Dir;
         AltDepsDir ->
             AltDepsDir
@@ -154,9 +156,10 @@ deps_dir(Config) ->
 %%
 -spec generate_handler(Base::string(),
                        Cmds::list(rebar_plugin_manager:command()),
-                       Origin::module()) -> module().
-generate_handler(Base, Cmds, Origin) ->
-    case rebar_config:get_global({Base, Origin}, undefined) of
+                       Origin::module(),
+                       Config::rebar_config:config()) -> module().
+generate_handler(Base, Cmds, Origin, Config) ->
+    case rebar_config:get_global(Config, {Base, Origin}, undefined) of
         undefined ->
             ?DEBUG("Generating handler(s) for ~p: ~p~n", [Base, Cmds]),
             Exports = [ {C, 2} || {command, C, _, _} <- Cmds ],
@@ -207,7 +210,7 @@ generate_handler(Base, Cmds, Origin) ->
                 CompileError ->
                     ?ABORT("Unable to compile: ~p~n", [CompileError])
             end,
-            rebar_config:set_global({Base, Origin}, Loaded),
+            rebar_config:set_global(Config, {Base, Origin}, Loaded),
             Loaded;
         Handler ->
             Handler
@@ -220,8 +223,9 @@ generate_handler(Base, Cmds, Origin) ->
 init(Plugin, Config) ->
     Plugin:init(Config).
 
-requires_init(Plugin) ->
-    case rebar_config:get_global({?MODULE, initialised, Plugin}, undefined) of
+requires_init(Plugin, Config) ->
+    case rebar_config:get_global(Config, 
+                                {?MODULE, initialised, Plugin}, undefined) of
         undefined ->
             erlang:function_exported(Plugin, init, 1);
         _ ->
@@ -285,8 +289,9 @@ update_code_path(Config) ->
 
     %% TODO: also we should put some explicit support in for seivy, where it isn't
     %%  already on the code path...
-    once(setup_path,
-        fun() ->
-            do_in_deps_dir(deps_dir(Config),
-                        (fun(Dir) -> code:add_pathz(Dir) end))
-        end).
+    once(Config,
+         setup_path,
+         fun() ->
+             do_in_deps_dir(deps_dir(Config),
+                            (fun(Dir) -> code:add_pathz(Dir) end))
+         end).
