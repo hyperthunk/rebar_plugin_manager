@@ -27,6 +27,25 @@
          once/3,
          is_base_dir/1,
          is_base_dir/2,
+         is_app_dir/1,
+         is_app_dir/2,
+         debug/2,
+         info/2,
+         warn/2,
+         error/2,
+         log/3,
+         sh/2,
+         read_config/4,
+         read_all_config/2,
+         write_config/4,
+         delete_config/3,
+         skip_dir/2,
+         is_skip_dir/2,
+         reset_skip_dirs/1,
+         abort/2,
+         cp_r/2,
+         rm_rf/1,
+         ensure_dir/1,
          do_in_deps_dir/2,
          generate_handler/4]).
 
@@ -51,6 +70,10 @@
               instruction_set/0,
               command/0]).
 
+%%
+%% Rebar Facing API
+%%
+
 -spec preprocess(rebar_config:config(), string()) -> {ok, list()}.
 preprocess(Config, _) ->
     Plugins = plugins(Config),
@@ -70,6 +93,10 @@ preprocess(Config, _) ->
                                                 [get_local, get, get_all] ],
             ok
     end.
+
+%%
+%% Plugin Facing API
+%%
 
 check_config(Key, ReadFunc, Config) ->
     Args = case ReadFunc of
@@ -126,6 +153,14 @@ is_base_dir(Config) ->
 is_base_dir(Dir, Config) ->
     Dir == rebar_config:get_xconf(Config, base_dir).
 
+-spec is_app_dir(rebar_config:config()) -> boolean().
+is_app_dir(Config) ->
+    is_app_dir(Config, rebar_utils:get_cwd()).
+
+-spec is_app_dir(rebar_config:config(), file:filename()) -> boolean().
+is_app_dir(_Config, Dir) ->
+    rebar_app_utils:is_app_dir(Dir).
+
 -spec do_in_deps_dir(string(), fun((string()) -> any())) -> 'ok'.
 do_in_deps_dir(DepsDir, Handler) ->
     case file:list_dir(DepsDir) of
@@ -148,6 +183,97 @@ deps_dir(Config) ->
         AltDepsDir ->
             AltDepsDir
     end.
+
+-spec debug(string(), [term()]) -> 'ok'.
+debug(Msg, Args) ->
+    log(debug, Msg, Args).
+
+-spec info(string(), [term()]) -> 'ok'.
+info(Msg, Args) ->
+    log(info, Msg, Args).
+
+-spec warn(string(), [term()]) -> 'ok'.
+warn(Msg, Args) ->
+    log(warn, Msg, Args).
+
+-spec error(string(), [term()]) -> 'ok'.
+error(Msg, Args) ->
+    log(error, Msg, Args).
+
+-spec log(atom(), string(), [term()]) -> 'ok'.
+log(Level, Msg, Args) ->
+    rebar_log:log(Level, Msg, Args).
+
+-spec read_config(atom(), rebar_config:config(),
+                  atom(), term()) -> term().
+read_config(xconf, Config, Key, Default) ->
+    rebar_config:get_xconf(Config, Key, Default);
+read_config(global, Config, Key, Default) ->
+    rebar_config:get_global(Config, Key, Default);
+read_config(local, Config, Key, Default) ->
+    rebar_config:get_local(Config, Key, Default);
+read_config(env, Config, Key, Default) ->
+    case catch(rebar_config:get_env(Config, Key)) of
+        {'EXIT', _} -> Default;
+        Other       -> Other
+    end.
+
+-spec read_all_config(rebar_config:config(), atom()) -> [term()].
+read_all_config(Config, Key) ->
+    rebar_config:get_all(Config, Key).
+
+-spec write_config(atom(), rebar_config:config(),
+                   atom(), term()) -> rebar_config:config().
+write_config(xconf, Config, Key, Value) ->
+    rebar_config:set_xconf(Config, Key, Value);
+write_config(global, Config, Key, Value) ->
+    rebar_config:set_global(Config, Key, Value);
+write_config(local, Config, Key, Value) ->
+    rebar_config:set(Config, Key, Value);
+write_config(env, Config, Key, Values) ->
+    rebar_config:set_env(Config, Key, Values).
+
+-spec delete_config(atom(),
+                    rebar_config:config(),
+                    atom()) -> rebar_config:config().
+delete_config(xconf, Config, Key) ->
+    rebar_config:erase_xconf(Config, Key);
+delete_config(Kind, _, Key) ->
+    abort("cannot erase ~p config key ~p: unsupported operation~n",
+          [Kind, Key]).
+
+-spec skip_dir(file:filename(), rebar_config:config()) -> rebar_config:config().
+skip_dir(Path, Config) ->
+    rebar_config:set_skip_dir(Config, Path).
+
+-spec is_skip_dir(rebar_config:config(), file:filename()) -> boolean().
+is_skip_dir(Config, Path) ->
+    rebar_config:is_skip_dir(Config, Path).
+
+-spec reset_skip_dirs(rebar_config:config()) -> rebar_config:config().
+reset_skip_dirs(Config) ->
+    rebar_config:reset_skip_dirs(Config).
+
+-spec abort(string(), [term()]) -> 'ok'.
+abort(Msg, Args) ->
+    rebar_utils:abort(Msg, Args).
+
+%% TODO: this is under-defined
+-spec sh(string(), [term()]) -> term().
+sh(Cmd, Opts) ->
+    rebar_utils:sh(Cmd, Opts).
+
+-spec cp_r([file:filename()], file:filename()) -> 'ok'.
+cp_r(Src, Dest) ->
+    rebar_file_utils:cp_r(Src, Dest).
+
+-spec rm_rf(file:filename()) -> 'ok'.
+rm_rf(Path) ->
+    rebar_file_utils:rm_rf(Path).
+
+-spec ensure_dir(file:filename()) -> 'ok'.
+ensure_dir(Target) ->
+    rebar_utils:ensure_dir(Target).
 
 %%
 %% @doc Generate 'Command'(Config, _AppFile) handler functions for each
