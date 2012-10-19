@@ -231,7 +231,7 @@ write_config(global, Config, Key, Value) ->
 write_config(local, Config, Key, Value) ->
     rebar_config:set(Config, Key, Value);
 write_config(env, Config, Key, Values) ->
-    rebar_config:set_env(Config, Key, Values).
+    rebar_config:save_env(Config, Key, Values).
 
 -spec delete_config(atom(),
                     rebar_config:config(),
