@@ -25,6 +25,7 @@
          command_info/1,
          plugins/1,
          once/3,
+         apply_command/2,
          is_base_dir/1,
          is_base_dir/2,
          is_app_dir/1,
@@ -69,6 +70,8 @@
               command_data/0,
               instruction_set/0,
               command/0]).
+
+-include_lib("kernel/include/file.hrl").
 
 %%
 %% Rebar Facing API
@@ -142,7 +145,7 @@ once(Tag, Command, Config) ->
             after rebar_config:set_global(Config, Tag, done)
             end;
         done ->
-            ok
+            Config
     end.
 
 -spec is_base_dir(rebar_config:config()) -> boolean().
@@ -151,7 +154,10 @@ is_base_dir(Config) ->
 
 -spec is_base_dir(string(), rebar_config:config()) -> boolean().
 is_base_dir(Dir, Config) ->
-    Dir == rebar_config:get_xconf(Config, base_dir).
+    case erlang:function_exported(rebar_utils, processing_base_dir, 1) of
+        true  -> rebar_utils:processing_base_dir(Config, Dir);
+        false -> Dir == rebar_config:get_global(base_dir, undefined)
+    end.
 
 -spec is_app_dir(rebar_config:config()) -> boolean().
 is_app_dir(Config) ->
@@ -342,9 +348,92 @@ generate_handler(Base, Cmds, Origin, Config) ->
             Handler
     end.
 
+apply_command(Dir, {rule, Rule, Instruction}) ->
+    case check(Dir, Rule) of
+        true -> ok;
+        false -> apply_command(Dir, Instruction)
+    end;
+apply_command(Dir, {create, Dest, Data}) ->
+    file:write_file(filename:join(Dir, Dest), Data, [write]);
+apply_command(Dir, {copy, Src, Dest}) ->
+    rebar_file_utils:cp_r([Src], filename:join(Dir, Dest));
+apply_command(Dir, {mkdir, Dest}) ->
+    rebar_utils:ensure_dir(filename:join([Dir, Dest, "FOO"]));
+apply_command(Dir, {link, Target, Alias}) ->
+    Filename = filename:join(Dir, Target),
+    case file:make_symlink(Filename, filename:join(Dir, Alias)) of
+        ok ->
+            ok;
+        {error, enotsup} ->
+            ?WARN("Unable to symlink ~s as ~s~n", [Target, Alias]),
+            apply_command(Dir, {copy, Target, Alias});
+        {error, _} ->
+            ?WARN("Unable to symlink ~s as ~s~n", [Target, Alias]),
+            ok
+    end;
+apply_command(Dir, {chmod, Target, Mode}) ->
+    Filename = filename:join(Dir, Target),
+    {ok, #file_info{mode = Prev}} = file:read_file_info(Filename),
+    case file:change_mode(Filename, Prev bor Mode) of
+        ok -> ok;
+        {error, Reason} ->
+            Err = file:format_error(Reason),
+            ?WARN("Unable to change mode on ~s: ~s~n", [Target, Err]),
+            ok
+    end;
+apply_command(Dir, {exec, Cmd}) ->
+    apply_command(Dir, {exec, Cmd, [{cd, Dir}]});
+apply_command(_Dir, {exec, Cmd, Opts}) ->
+    case rebar_utils:sh(Cmd, [return_on_error|Opts]) of
+        {error, {Rc, Err}} ->
+            ?WARN("Command '~s' failed with ~p: ~s~n", [Cmd, Rc, Err]),
+            ok;
+        Ret->
+            Ret
+    end;
+apply_command(_, {make, Options}) ->
+    make:all(Options);
+apply_command(Dir, {call, {M, F, A, dir}}) ->
+    apply_command(Dir, {call, {M, F, [Dir|A]}});
+apply_command(Dir, {call, {_,_,_}=MFA, Extra}) ->
+    code:add_pathsa(Extra),
+    apply_command(Dir, {call, MFA});
+apply_command(_, {call, {M, F, A}}) ->
+    code:ensure_loaded(M),
+    apply(M, F, A);
+apply_command(_, {command, _, _, _}=Cmd) ->
+    Cmd;
+apply_command(Dir, InstructionSet) when is_list(InstructionSet) ->
+    [ apply_command(Dir, I) || I <- InstructionSet ].
+
 %%
 %% Internal API
 %%
+
+check(Dir, {Target, Deps}) ->
+    Xs = match_rule(Dir, Target),
+    case match_rule(Dir, Deps) of
+        [] ->
+            ?DEBUG("Skipping rule with no matching dependencies...~n", []),
+            true;
+        Ys ->
+            NeedsUpdate = [ X || X <- Xs, Y <- Ys,
+                   filelib:last_modified(X) < filelib:last_modified(Y) ],
+            ?DEBUG("Modified dependencies: ~p~n", [NeedsUpdate]),
+            %% there are some matching Xs, but no Ys are newer on the file system
+            length(Xs) > 0 andalso length(NeedsUpdate) == 0
+    end;
+check(Dir, Rule) ->
+    length(match_rule(Dir, Rule)) > 0.
+
+match_rule(Dir, Rule) when is_list(Rule) ->
+    ?DEBUG("Checking rule '~s' ...~n", [Rule]),
+    FileList = case filelib:wildcard(filename:join(Dir, Rule)) of
+        [] -> rebar_utils:find_files(Dir, Rule, true);
+        Found when is_list(Found) -> Found
+    end,
+    ?DEBUG("Matched ~p~n", [FileList]),
+    FileList.
 
 init(Plugin, Config) ->
     Plugin:init(Config).
